@@ -614,3 +614,92 @@ def serve(
     import uvicorn
 
     uvicorn.run("fraudlens.api.main:app", host=host, port=port, access_log=False)
+
+
+# ------------------------------------------------------------------- Phase 9: monitoring
+
+
+@app.command("export-model")
+def export_model() -> None:
+    """Copy the @champion out of MLflow into models/champion/ (for MODEL_SOURCE=local)."""
+    from fraudlens.api.model_loader import export_champion
+
+    config = get_config()
+    out = config.resolve(config.paths.models) / "champion"
+    with log_duration("export champion model", logger):
+        meta = export_champion(config, get_env(), out)
+    typer.echo(f"Exported {meta['name']} v{meta['version']} ({meta['family']}), threshold "
+               f"{meta['threshold']:.4f}, to {out}")  # fmt: skip
+
+
+@app.command("replay")
+def replay_cmd(
+    speed: Annotated[float, typer.Option(help="Transactions per second.")] = 20.0,
+    limit: Annotated[int, typer.Option(help="How many test transactions to send.")] = 3000,
+    start: Annotated[
+        str | None, typer.Option(help="Start at this time (default: start of fraudTest).")
+    ] = None,
+    explain_every: Annotated[
+        int, typer.Option(help="Send every Nth to /predict_explained (0 = never; uses Gemini).")
+    ] = 0,
+    url: Annotated[str, typer.Option(help="API base URL.")] = "http://127.0.0.1:8000",
+) -> None:
+    """Replay test transactions against the API in time order (simulated live traffic)."""
+    import datetime as dt
+
+    from fraudlens.monitoring.replay import load_replay_rows, replay
+
+    config = get_config()
+    rows = load_replay_rows(_processed_files()["test"],
+                            dt.datetime.fromisoformat(start) if start else None, limit)  # fmt: skip
+    typer.echo(f"Replaying {len(rows):,} transactions to {url} at {speed:g}/s "
+               f"(about {len(rows) / speed / 60:.1f} min)...")  # fmt: skip
+    with log_duration("replay", logger):
+        summary, results = replay(rows, url, speed, explain_every)
+    out = config.resolve(config.paths.reports) / "replay" / "predictions.parquet"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    results.to_parquet(out, index=False)
+    s = summary
+    typer.echo(
+        f"Sent {s.sent:,} ({s.first_ts} to {s.last_ts}) in {s.seconds:,.0f}s ({s.rate:.1f}/s): "
+        f"scored {s.scored:,}, explained {s.explained:,}, "
+        f"rejected as out of order {s.rejected_out_of_order:,}, errors {s.errors:,}."
+    )
+    typer.echo(f"Live performance on these labels: recall {s.recall:.3f}, precision "
+               f"{s.precision:.3f} (TP {s.tp}, FP {s.fp}, FN {s.fn}). Results: {out}")  # fmt: skip
+
+
+@app.command("drift-report")
+def drift_report_cmd(
+    reference_size: Annotated[int, typer.Option(help="Train rows in the reference.")] = 20_000,
+    rebuild_reference: Annotated[bool, typer.Option(help="Re-sample the reference.")] = False,
+) -> None:
+    """Evidently drift reports: each test month vs a training reference (features + score)."""
+    import pandas as pd
+
+    from fraudlens.api.model_loader import load_model_bundle
+    from fraudlens.monitoring.drift import (
+        REFERENCE_FILE,
+        build_reference,
+        monthly_drift,
+        reference_fraud_rate,
+        render_summary,
+    )
+
+    config = get_config()
+    with log_duration("load champion model", logger):
+        pipeline = load_model_bundle(config, get_env()).pipeline
+    ref_path = config.resolve(config.paths.reference) / REFERENCE_FILE
+    with log_duration("reference sample", logger):
+        if ref_path.is_file() and not rebuild_reference:
+            reference = pd.read_parquet(ref_path)
+        else:
+            reference = build_reference(config, pipeline, reference_size, ref_path)
+    out_dir = config.resolve(config.paths.reports) / "drift"
+    with log_duration("monthly drift reports", logger):
+        table = monthly_drift(config, pipeline, reference, out_dir)
+    summary = render_summary(table, reference, reference_fraud_rate(config))
+    (out_dir / "summary.md").write_text(summary, encoding="utf-8")
+    table.to_csv(out_dir / "drift_by_column.csv", index=False)
+    typer.echo(summary)
+    typer.echo(f"Reports: {out_dir}")

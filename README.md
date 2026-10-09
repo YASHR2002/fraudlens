@@ -52,4 +52,14 @@ docker compose --profile serve up -d                                # MLflow + A
 - Dashboard: http://127.0.0.1:8501
 - Explain one transaction from the terminal: `uv run fraudlens explain --trans-num <id>`
 
+Monitoring (Prometheus + Grafana, no MLflow needed):
+
+```powershell
+uv run fraudlens export-model                        # champion -> models\champion\ (needs MLflow up)
+docker compose --profile "*" down; docker compose --profile monitoring up -d
+uv run fraudlens replay --speed 25 --limit 6000      # simulated live traffic
+$env:MODEL_SOURCE="local"; uv run fraudlens drift-report   # reports\drift```
+
+- Grafana: http://127.0.0.1:3000 (dashboard "FraudLens: scoring API"), Prometheus: http://127.0.0.1:9090
+
 Design decisions and trade-offs are logged in [docs/decisions.md](docs/decisions.md).

@@ -559,3 +559,82 @@ settings), which Phase 5 tuning should address.
 ### D8.5 Running footprint (serve profile)
 
 MLflow ~330 MB, API ~530 MB (1 GB limit), dashboard ~70 MB: about 0.93 GB of Docker's 3 GB.
+
+---
+
+## Phase 9: Monitoring and drift
+
+### D9.1 What the API exposes to Prometheus
+
+- HTTP metrics from `prometheus-fastapi-instrumentator`, with latency buckets from 1 ms to 10 s
+  (dense between 5 and 25 ms); the library's default buckets start at 100 ms, too coarse for a
+  5 ms endpoint.
+- Model metrics: transactions scored by endpoint and decision (flag rate), a fraud-score
+  histogram (an early drift signal), analyst notes by source (LLM vs fallback) with LLM latency,
+  duplicates, out-of-order rejections, and gauges for the serving model, threshold and cards.
+- Each app owns its Prometheus registry, so tests can build many apps in one process.
+
+### D9.2 Monitoring profile without MLflow
+
+- `fraudlens export-model` copies `@champion` (skops model + metadata: threshold, metrics,
+  importance, fairness) to `models/champion/` (1.4 MB) and verifies it loads before replacing
+  the previous export. A second Compose service, `api-monitoring`, shares the API definition
+  through a YAML anchor but sets `MODEL_SOURCE=local` and has no MLflow dependency; a network
+  alias keeps `api:8000` as the single scrape target. Footprint: API ~370 MB, Prometheus ~120 MB,
+  Grafana ~130 MB.
+
+### D9.3 Grafana is provisioned, not clicked together
+
+- Datasource and a 12-panel dashboard (`docker/grafana/provisioning/`) load at startup: serving
+  model and threshold, transactions scored, flag rate, p50/p95/p99 latency, requests/s, error
+  rate, score distribution, LLM notes by source and LLM latency. Anonymous read-only viewing is
+  enabled for the local stack only (ports bind to 127.0.0.1).
+- Ratios use `or vector(0)` so "no fallbacks" and "no errors" show 0% instead of "No data".
+
+### D9.4 Replay: live traffic, exact features
+
+- `fraudlens replay --speed <tx per second>` sends test transactions in time order with
+  `update_state=true`, continuing the snapshot's history, so features stay exact; every
+  response is saved with its true label for live recall/precision. Every Nth can go to the
+  explained endpoint to exercise the LLM without exhausting the free quota.
+- **First run (6,000 transactions, 21 Jun 12:14 to 22 Jun 23:28):** 241 s at 24.9/s, 0 errors,
+  0 out-of-order, recall 1.000 (21 of 21 frauds), precision 0.913, 12 of 12 LLM notes.
+
+### D9.5 Latency under sparse traffic (finding)
+
+- During the 25/s replay, handler p95 was ~20 ms against ~8 ms in the back-to-back benchmark.
+  A controlled test on unseen transactions (all updating state) isolated the cause:
+
+  | Traffic | p50 | p95 | p99 |
+  |---|---|---|---|
+  | back-to-back | 5.6 ms | 7.9 ms | 9.8 ms |
+  | 100 requests/s | 5.7 ms | 8.4 ms | 10.5 ms |
+  | 25 requests/s | 6.6 ms | 19.9 ms | 23.2 ms |
+
+- The model and state work are unchanged; with ~40 ms idle between requests the laptop CPU and
+  the WSL2 VM drop into power saving, and waking costs ~10-15 ms on a share of requests. This is
+  a property of sparse traffic on a laptop, not of the code; under steady load the p95 is under
+  10 ms. Both numbers are reported; the 20 ms target holds at p95 in both regimes.
+
+### D9.6 Drift reports (Evidently) and what they found
+
+- **Setup:** reference = 20,000 seeded train rows (features + champion score); current = each
+  test month (up to 20,000 rows). Evidently picks Wasserstein distance (numeric) and
+  Jensen-Shannon (categorical), drift at >= 0.1. Output: one HTML report per month,
+  `reports/drift/summary.md`, and a per-column CSV. Runs in ~22 s.
+- **Findings (4 to 8 of 19 columns drift each month; dataset-level drift never triggered):**
+  1. `card_txn_number` drifts most (distance up to 2.9) **by construction**: it is a running
+     count, so later months always exceed the training range. The model is extrapolating on it;
+     a production model would cap it or use a recency-bounded count instead.
+  2. Velocity features (`card_txn_count_7d/24h`, `card_amt_sum_24h`, `secs_since_last_txn`)
+     drift most in December, when transaction volume doubles for the holidays.
+  3. `day_of_week` drifts every month: a **simulator calendar artefact**. Weekday shares are
+     shifted by exactly one day between Mar 2019 and Feb 2020 (busiest Sun/Mon/Sat) versus the
+     other periods (busiest Mon/Tue/Sun), because the generator's 2012 calendar was relabelled
+     onto 2019-2020 across a leap day (same root cause as D1.2). Most of the reference falls in
+     the shifted year.
+  4. The **score** distribution barely drifts (distance <= 0.05; mean score 0.0029 in December
+     vs 0.0064 in the reference), so the model's outputs are stable even where inputs move; the
+     larger issue remains the threshold drift found in D6.4 as the fraud rate changes.
+- Harmless `invalid value encountered in divide` warnings come from Evidently on columns with
+  zero variance in a month's sample.

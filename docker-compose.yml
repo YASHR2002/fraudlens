@@ -71,20 +71,18 @@ services:
       retries: 10
     restart: unless-stopped
 
-  api:
+  api: &api
     build:
       context: .
       dockerfile: docker/api.Dockerfile
     image: fraudlens-api:local
-    profiles: ["serve", "monitoring"]
+    profiles: ["serve"]
     env_file:   # GOOGLE_API_KEY, GEMINI_MODEL, FRAUD_THRESHOLD (secrets stay out of the image)
       - path: .env
         required: false
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000   # overrides the host value from .env
-      # serve: load the champion from MLflow; monitoring: MLflow is stopped, so the API
-      # loads the exported copy in ./models (set MODEL_SOURCE=local for that profile).
-      MODEL_SOURCE: ${MODEL_SOURCE:-mlflow}
+      MODEL_SOURCE: mlflow                      # the @champion from the MLflow registry
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -93,9 +91,21 @@ services:
     depends_on:
       mlflow:
         condition: service_healthy
-        required: false   # absent in the monitoring profile
     mem_limit: 1g
     restart: unless-stopped
+
+  # Same image and settings, for the monitoring profile: MLflow is not running, so the model is
+  # loaded from the export in ./models (`fraudlens export-model`). The network alias keeps the
+  # address `api:8000` that Prometheus scrapes.
+  api-monitoring:
+    <<: *api
+    profiles: ["monitoring"]
+    environment:
+      MODEL_SOURCE: local
+    depends_on: {}
+    networks:
+      default:
+        aliases: [api]
 
   dashboard:
     build:
@@ -117,7 +127,7 @@ services:
     image: prom/prometheus:v3.13.4
     profiles: ["monitoring"]
     command:
-      - --config.file=/etc/prometheus/prometheus.yml   # added in Phase 9
+      - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=7d
     ports:
       - "127.0.0.1:9090:9090"
@@ -125,7 +135,7 @@ services:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus:/prometheus
     depends_on:
-      - api
+      - api-monitoring
     mem_limit: 256m
     restart: unless-stopped
 
@@ -136,10 +146,15 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
+      # Local, read-only viewing without a login (ports bind to 127.0.0.1 only). Phase 12
+      # restricts Grafana to the owner's IP when it runs on AWS.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/fraudlens.json
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
-      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro   # filled in Phase 9
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro   # datasource + dashboard
       - grafana:/var/lib/grafana
     depends_on:
       - prometheus

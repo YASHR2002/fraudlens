@@ -182,3 +182,31 @@ def load_model_bundle(config: AppConfig, env: EnvSettings) -> ModelBundle:
     raise ModelLoadError(
         f"MODEL_SOURCE={env.model_source!r} is not available yet (added in Phase 11/12)."
     )
+
+
+def export_champion(config: AppConfig, env: EnvSettings, out_dir: Path) -> dict[str, Any]:
+    """Copy the @champion model and its metadata out of MLflow into ``out_dir``.
+
+    The result (``model/`` + ``metadata.json``) is what ``MODEL_SOURCE=local`` loads, so the API
+    can run without the MLflow server (monitoring profile, Hugging Face, AWS).
+    """
+    import shutil
+
+    import mlflow
+
+    bundle = load_from_mlflow(config, env)
+    t = config.training
+    tmp = out_dir.with_name(out_dir.name + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    mlflow.artifacts.download_artifacts(
+        artifact_uri=f"models:/{t.registered_model_name}@{t.champion_alias}",
+        dst_path=str(tmp / "model"),
+    )
+    meta = {**bundle.metadata(), "exported_utc": dt.datetime.now(dt.UTC).isoformat(
+        timespec="seconds")}  # fmt: skip
+    (tmp / LOCAL_METADATA).write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    load_from_local(tmp, env)  # verify the export loads before replacing the previous one
+    shutil.rmtree(out_dir, ignore_errors=True)
+    tmp.replace(out_dir)
+    return meta

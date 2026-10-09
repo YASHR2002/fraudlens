@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from fraudlens import __version__
+from fraudlens.api.metrics import LATENCY_BUCKETS, create_model_metrics
 from fraudlens.api.model_loader import ModelBundle
 from fraudlens.api.schemas import (
     BatchIn,
@@ -75,6 +76,7 @@ def create_app(
                 svc.bundle, svc.state, svc.llm = loaded.bundle, loaded.state, loaded.llm
                 svc.top_factors = loaded.top_factors
                 svc.demo = loaded.demo
+                publish_model_gauges()
                 logger.info("Ready: %s v%s (%s), threshold %.4f, %d cards", svc.bundle.name,
                             svc.bundle.version, svc.bundle.source, svc.bundle.threshold,
                             len(svc.state.store.cards))  # fmt: skip
@@ -96,11 +98,27 @@ def create_app(
     # registry, so several apps in one process (tests) never share or clash on metrics.
     from prometheus_client import CollectorRegistry
     from prometheus_fastapi_instrumentator import Instrumentator
+    from prometheus_fastapi_instrumentator import metrics as http_metrics
 
     app.state.registry = CollectorRegistry()
-    Instrumentator(excluded_handlers=["/metrics"], registry=app.state.registry).instrument(
-        app
-    ).expose(app, include_in_schema=False)
+    instrumentator = Instrumentator(excluded_handlers=["/metrics"], registry=app.state.registry)
+    # Fine latency buckets: the default ones start at 100 ms, the fast path takes ~5 ms.
+    instrumentator.add(
+        http_metrics.default(latency_lowr_buckets=LATENCY_BUCKETS, registry=app.state.registry)
+    )
+    instrumentator.instrument(app).expose(app, include_in_schema=False)
+    mm = create_model_metrics(app.state.registry)
+    app.state.model_metrics = mm
+
+    def publish_model_gauges() -> None:
+        if svc.bundle is not None:
+            b = svc.bundle
+            mm.model_info.labels(b.name, b.version, b.family, b.source).set(1)
+            mm.threshold.set(b.threshold)
+        if svc.state is not None:
+            mm.cards.set(len(svc.state.store.cards))
+
+    publish_model_gauges()  # injected services (tests); the loader path publishes after loading
 
     @app.middleware("http")
     async def log_latency(request: Request, call_next: Callable) -> Any:
@@ -118,18 +136,25 @@ def create_app(
             raise HTTPException(503, detail=svc.load_error or "model or state not loaded yet")
         return svc.bundle, svc.state
 
-    def score_one(t: TransactionIn) -> tuple[PredictionOut, dict[str, Any], float]:
+    def score_one(t: TransactionIn, endpoint: str) -> tuple[PredictionOut, dict[str, Any], float]:
         bundle, state = ready()
         start = time.perf_counter()
         try:
             scored = state.features(_to_txn(t), t.trans_num, record=t.update_state)
         except OutOfOrderError as exc:
+            mm.rejected_out_of_order.inc()
             raise HTTPException(
                 409, detail=f"transaction is older than this card's latest recorded one: {exc}"
             ) from exc
         X = single_row_frame(scored.features)
         score = float(bundle.pipeline.predict_proba(X)[0, 1])
         flagged = score >= bundle.threshold
+        mm.predictions.labels(endpoint, "flagged" if flagged else "approved").inc()
+        mm.scores.observe(score)
+        if scored.duplicate:
+            mm.duplicates.inc()
+        if scored.recorded:
+            mm.cards.set(len(state.store.cards))
         out = PredictionOut(
             trans_num=t.trans_num, score=score, flagged=flagged,
             decision="flagged" if flagged else "approved", threshold=bundle.threshold,
@@ -155,7 +180,7 @@ def create_app(
     @app.post("/predict", response_model=PredictionOut, tags=["scoring"])
     def predict(t: TransactionIn) -> PredictionOut:
         """Score one transaction (fast path, no explanation)."""
-        return score_one(t)[0]
+        return score_one(t, "predict")[0]
 
     @app.post("/predict/batch", response_model=BatchOut, tags=["scoring"])
     def predict_batch(batch: BatchIn) -> BatchOut:
@@ -167,7 +192,7 @@ def create_app(
         for i in order:
             t = batch.transactions[i]
             try:
-                results[i] = BatchItemOut(trans_num=t.trans_num, result=score_one(t)[0])
+                results[i] = BatchItemOut(trans_num=t.trans_num, result=score_one(t, "batch")[0])
             except HTTPException as exc:
                 results[i] = BatchItemOut(trans_num=t.trans_num, error=str(exc.detail))
         return BatchOut(results=[results[i] for i in range(len(order))],
@@ -177,7 +202,7 @@ def create_app(
     def predict_explained(t: TransactionIn) -> ExplainedPredictionOut:
         """Score one transaction and explain it: SHAP factors plus an LLM analyst note."""
         start = time.perf_counter()
-        pred, features, score = score_one(t)
+        pred, features, score = score_one(t, "predict_explained")
         bundle = svc.bundle
         X_raw = pd.DataFrame([features])[FEATURE_NAMES]
         shap_values = dict(zip(FEATURE_NAMES, map(float, bundle.explainer.shap_values(X_raw)[0]),
@@ -190,7 +215,10 @@ def create_app(
             amount=t.amt, category=t.category, hour=int(row["hour"]),
             distance_km=float(row["distance_km"]),
         )  # fmt: skip
+        llm_start = time.perf_counter()
         note = svc.llm.explain(ctx) if svc.llm else LLMExplainer(None, None).explain(ctx)
+        mm.llm_explanations.labels(note.explanation_source).inc()
+        mm.llm_latency.labels(note.explanation_source).observe(time.perf_counter() - llm_start)
         clean = {k: (None if isinstance(v, float) and v != v else v) for k, v in features.items()}
         return ExplainedPredictionOut(
             **{**pred.model_dump(), "latency_ms": round((time.perf_counter() - start) * 1000, 3)},

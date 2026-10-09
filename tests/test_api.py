@@ -119,8 +119,31 @@ def test_loader_failure_is_reported_not_raised() -> None:
 
 def test_metrics_endpoint(client, raw) -> None:
     client.post("/predict", json=payload(raw.iloc[150].to_dict(), update_state=False))
+    client.post("/predict", json=payload(raw.iloc[150].to_dict(), update_state=False))
+    client.post("/predict_explained", json=payload(raw.iloc[151].to_dict(), update_state=False))
+    client.post("/predict", json=payload(raw.iloc[160].to_dict()))
+    same_card = raw.iloc[:160][raw.iloc[:160]["cc_num"] == raw.iloc[160]["cc_num"]]
+    older = client.post("/predict", json=payload(same_card.iloc[-1].to_dict()))
+    assert older.status_code == 409  # same card, earlier than the one just recorded
     text = client.get("/metrics").text
-    assert 'handler="/predict"' in text and "http_request_duration_seconds" in text
+    # HTTP metrics with fine latency buckets (the fast path takes milliseconds).
+    assert 'handler="/predict"' in text and 'le="0.005"' in text
+    # Model-level metrics.
+    scored = sum(
+        float(line.rsplit(" ", 1)[1])
+        for line in text.splitlines()
+        if line.startswith("fraudlens_predictions_total{")
+    )
+    assert scored == 4  # the 409 is not counted as a prediction
+    assert "fraudlens_predictions_total{decision=" in text or 'endpoint="predict_explained"' in text
+    assert "fraudlens_fraud_score_count 4.0" in text
+    assert 'fraudlens_llm_explanations_total{source="llm"} 1.0' in text
+    assert "fraudlens_out_of_order_total 1.0" in text
+    assert (
+        'fraudlens_model_info{family="lightgbm",name="test-model",source="test",version="7"} 1.0'
+        in text
+    )
+    assert "fraudlens_decision_threshold 0.5" in text
 
 
 # --- /predict ----------------------------------------------------------------------------

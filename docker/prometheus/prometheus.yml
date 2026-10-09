@@ -1,0 +1,10 @@
+# Prometheus scrapes the FraudLens API's /metrics endpoint (HTTP + model-level metrics).
+global:
+  scrape_interval: 5s        # short, so a replay shows up quickly on the dashboard
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: fraudlens-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
