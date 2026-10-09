@@ -1,0 +1,65 @@
+{
+  "xgboost": {
+    "n_estimators": 700,
+    "learning_rate": 0.21677847638978529,
+    "max_depth": 8,
+    "min_child_weight": 15.107188658784322,
+    "subsample": 0.9653200615637411,
+    "colsample_bytree": 0.6595544187587308,
+    "gamma": 1.207602507806329,
+    "reg_lambda": 6.618661826466112,
+    "reg_alpha": 1.2113041691820572
+  },
+  "lightgbm": {
+    "n_estimators": 450,
+    "learning_rate": 0.14156141454561902,
+    "num_leaves": 26,
+    "min_child_samples": 217,
+    "subsample": 0.6994725588642032,
+    "colsample_bytree": 0.5266162401266973,
+    "min_split_gain": 0.4583018964772069,
+    "reg_lambda": 2.33786047434401,
+    "reg_alpha": 3.004927979563451,
+    "subsample_freq": 1
+  },
+  "_meta": {
+    "created_utc": "2026-10-07T20:39:19+00:00",
+    "objective": "validation PR-AUC (average precision)",
+    "studies": {
+      "xgboost": {
+        "best_val_pr_auc": 0.986531,
+        "best_trial": 11,
+        "trials": {
+          "PRUNED": 34,
+          "COMPLETE": 16
+        }
+      },
+      "lightgbm": {
+        "best_val_pr_auc": 0.985273,
+        "best_trial": 30,
+        "trials": {
+          "PRUNED": 30,
+          "COMPLETE": 20
+        }
+      }
+    },
+    "source": "kaggle",
+    "n_trials_requested": 50,
+    "seed": 42,
+    "split": {
+      "train_end": "2020-04-21",
+      "validation_end": "2020-06-21"
+    },
+    "data_sha256": "e8f500b472d3734ddf156563fa4bbbc1794e1fec2cd2a93d746e26ad98c008b1",
+    "versions": {
+      "python": "3.13.15",
+      "scikit-learn": "1.9.1",
+      "xgboost": "3.2.0",
+      "lightgbm": "4.7.0",
+      "optuna": "5.0.0",
+      "pandas": "2.3.3",
+      "numpy": "2.1.3",
+      "fraudlens": "0.1.0"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+# Keep images small and free of data and secrets.
+.git
+.venv
+.env
+.env.*
+!.env.example
+data
+models
+mlruns
+mlartifacts
+reports
+notebooks
+tests
+docs
+dist
+.vscode
+.idea
+**/__pycache__
+.pytest_cache
+.ruff_cache
+*.ipynb

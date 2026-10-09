@@ -1,0 +1,50 @@
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+kaggle.json
+*.pem
+
+# --- Data, models, artifacts (never committed) ---
+# Keep the directory skeleton via .gitkeep files only.
+data/**
+!data/**/
+!data/**/.gitkeep
+reports/**
+!reports/.gitkeep
+/models/
+/mlruns/
+/mlartifacts/
+mlflow.db
+*.parquet
+*.csv
+!tests/fixtures/*.csv
+*.zip
+*.pkl
+*.joblib
+*.ubj
+*.onnx
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

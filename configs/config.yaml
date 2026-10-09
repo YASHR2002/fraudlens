@@ -1,0 +1,74 @@
+# FraudLens configuration: every tunable, non-secret setting lives here.
+# Secrets and deployment settings live in .env (see .env.example).
+
+seed: 42
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  reference: data/reference
+  reports: reports
+  models: models
+
+data:
+  kaggle_dataset: kartik2112/fraud-detection   # Sparkov simulated transactions, CC0
+  train_file: fraudTrain.csv
+  test_file: fraudTest.csv
+  csv_block_size_mb: 32                        # CSVs are streamed in blocks of this size
+
+split:
+  # Time-based split, set in Phase 1 from reports/data_quality.md. Dates are inclusive
+  # calendar days of trans_ts; fraudTest rows are always test (source = 'test').
+  train_end: "2020-04-21"        # train: fraudTrain 2019-01-01..2020-04-21, 1,145,597 rows, 6,558 fraud
+  validation_end: "2020-06-21"   # validation: fraudTrain 2020-04-22..2020-06-21, 151,078 rows, 948 fraud
+  # test = all of fraudTest (2020-06-21 12:14..2020-12-31, 555,719 rows, 2,145 fraud),
+  # used ONCE for the final report (Phase 6)
+
+costs:
+  false_positive_cost: 5.0       # analyst review cost per false alarm (USD)
+  false_negative_cost: amount    # a missed fraud costs the transaction amount
+
+training:
+  experiment_name: fraudlens
+  # One registered model holds every candidate version; the alias marks the one in production.
+  registered_model_name: fraudlens-fraud-detector
+  champion_alias: champion
+  best_params_file: configs/best_params.json   # from Kaggle tuning (Phase 5)
+  # Baseline hyperparameters (Phase 4): sensible defaults, not tuned. Phase 5 tunes on Kaggle.
+  # No early stopping: it would use validation to pick n_estimators, leaking into the
+  # validation scores that compare models.
+  models:
+    logreg:
+      C: 1.0
+      max_iter: 2000
+    xgboost:
+      n_estimators: 400
+      learning_rate: 0.05
+      max_depth: 6
+      min_child_weight: 1
+      subsample: 0.8
+      colsample_bytree: 0.8
+    lightgbm:
+      n_estimators: 400
+      learning_rate: 0.05
+      num_leaves: 63
+      min_child_samples: 50
+      subsample: 0.8
+      subsample_freq: 1
+      colsample_bytree: 0.8
+
+promotion:
+  min_recall: 0.80
+  min_precision: 0.50
+  require_pr_auc_at_least_champion: true
+
+shap:
+  global_sample_size: 10000
+
+llm:
+  provider: gemini
+  model_env_var: GEMINI_MODEL
+  timeout_seconds: 15
+  thinking_level: low       # Gemini 3.x: low | medium | high; null to omit
+  max_attempts: 2           # one retry, then the template fallback
+  top_factors: 5            # SHAP factors given to the LLM

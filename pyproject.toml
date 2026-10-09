@@ -1,0 +1,113 @@
+[project]
+name = "fraudlens"
+version = "0.1.0"
+description = "Explainable real-time credit card fraud detection: SQL features, cost-based thresholds, MLflow, SHAP + LLM explanations, FastAPI, monitoring."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { text = "MIT" }
+# Core: needed by every component (training, API, CLI). Model libraries live here because
+# the API must load the same XGBoost/LightGBM/sklearn models and explain them with SHAP.
+dependencies = [
+    "google-genai>=2.28.0,<3.0.0",
+    "lightgbm>=4.7.0,<5.0.0",
+    "numpy>=2.4.6,<3.0.0",
+    "pandas>=3.0.6,<4.0.0",
+    "pyarrow>=25.0.1,<26.0.0",
+    "pydantic>=2.13.5,<3.0.0",
+    "pydantic-settings>=2.15.0,<3.0.0",
+    "python-dotenv>=1.2.4,<2.0.0",
+    "pyyaml>=6.0.3,<7.0.0",
+    "scikit-learn>=1.9.1,<2.0.0",
+    "shap>=0.51.0,<0.52.0",
+    "typer>=0.27.2,<0.28.0",
+    "xgboost>=3.2.0,<4.0.0",
+]
+
+[project.scripts]
+fraudlens = "fraudlens.cli:app"
+
+# Component-specific dependencies (PEP 735). `uv sync` installs all of them for local
+# development; Docker images install only what they need, e.g.
+#   uv sync --no-default-groups --group api
+[dependency-groups]
+train = [
+    "evidently>=0.7.23,<0.8.0",
+    "ipykernel>=7.4.0,<8.0.0",
+    "kaggle>=2.2.4,<3.0.0",
+    "matplotlib>=3.11.2,<4.0.0",
+    "mlflow>=3.16.1,<4.0.0",
+    "nbclient>=0.11.0,<0.12.0",
+    "nbformat>=5.11.1,<6.0.0",
+    "optuna>=5.0.0,<6.0.0",
+    "psutil>=7.2.2,<8.0.0",
+    "psycopg[binary]>=3.3.6,<4.0.0",
+    "sqlalchemy>=2.1.3,<3.0.0",
+    "tabulate>=0.10.0,<0.11.0",
+]
+api = [
+    "fastapi>=0.142.2,<0.143.0",
+    "huggingface-hub>=2.1.1,<3.0.0",
+    "mlflow-skinny>=3.16.1,<4.0.0",
+    "prometheus-fastapi-instrumentator>=8.1.0,<9.0.0",
+    "skops>=0.16.0,<0.17.0",
+    "uvicorn[standard]>=0.54.0,<0.55.0",
+]
+dashboard = [
+    "httpx>=0.28.1,<0.29.0",
+    "plotly>=5.24.1,<6.0.0",
+    "streamlit>=1.65.0,<2.0.0",
+]
+dev = [
+    "pre-commit>=4.6.2,<5.0.0",
+    "pytest>=9.1.1,<10.0.0",
+    "pytest-cov>=7.1.0,<8.0.0",
+    "ruff>=0.16.10,<0.17.0",
+]
+
+[tool.uv]
+default-groups = ["train", "api", "dashboard", "dev"]
+# XGBoost depends on NVIDIA's NCCL (~470 MB) on Linux for multi-GPU training. Everything here
+# runs on CPU, so the dependency is dropped (the marker never matches); XGBoost loads NCCL only
+# when distributed GPU training is requested.
+override-dependencies = ["nvidia-nccl-cu12; sys_platform == 'never'"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fraudlens"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+extend-include = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "SIM", # simplify
+    "N",   # pep8-naming
+    "PTH", # prefer pathlib
+    "T20", # no print() in library code
+]
+ignore = ["N803", "N806"]  # allow ML-style names like X, X_train
+
+[tool.ruff.lint.per-file-ignores]
+"src/fraudlens/cli.py" = ["T20"]
+"tests/**" = ["T20"]
+"notebooks/**" = ["T20", "E402", "E501"]  # long f-strings in exploratory print() calls
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+
+[tool.coverage.run]
+source = ["fraudlens"]
+branch = true
