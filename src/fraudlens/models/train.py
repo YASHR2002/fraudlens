@@ -98,6 +98,12 @@ def load_split_data(config: AppConfig) -> SplitData:
     """Load the train and validation splits (never test) as model-ready arrays."""
     df = load_features(config, columns=[*FEATURE_NAMES, TARGET], splits=("train", "validation"))
     train, val = df[df["split"] == "train"], df[df["split"] == "validation"]
+    for name, part in (("train", train), ("validation", val)):
+        if len(part) == 0 or part[TARGET].sum() == 0:
+            raise ValueError(
+                f"the {name} split has {len(part):,} rows and no fraud; PR-AUC and cost are "
+                "undefined. Check split.train_end / split.validation_end in config.yaml."
+            )
     return SplitData(
         X_train=prepare_features(train),
         y_train=train[TARGET].to_numpy(dtype=np.int8),

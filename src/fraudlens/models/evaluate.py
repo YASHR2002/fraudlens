@@ -47,6 +47,8 @@ class Evaluation:
     @property
     def cost_saving(self) -> float:
         """Share of the flag-nothing cost avoided at the cost-optimal threshold."""
+        if self.cost_flag_nothing == 0:
+            return float("nan")  # no fraud in the data: nothing to save
         return 1 - self.cost_point.total_cost / self.cost_flag_nothing
 
     def metrics(self, prefix: str) -> dict[str, float]:

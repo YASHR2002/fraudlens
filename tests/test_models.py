@@ -114,3 +114,22 @@ def test_evaluation_metrics_and_plots(fitted, data) -> None:
     assert all(isinstance(f, Figure) for f in figs)
     with pytest.raises(ValueError, match="at most"):
         plot_pr_comparison({str(i): (y, scores) for i in range(4)}, "t")
+
+
+def test_evaluation_without_fraud_is_nan_safe() -> None:
+    ev = evaluate(np.zeros(5, dtype=int), np.linspace(0, 1, 5), np.ones(5), 5.0)
+    assert ev.cost_flag_nothing == 0 and np.isnan(ev.cost_saving)
+
+
+def test_training_refuses_a_split_without_fraud(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fraudlens.config import load_config
+    from fraudlens.models import train as train_mod
+
+    df = pd.read_csv(FIXTURE).assign(split="validation")
+    df.loc[:149, "split"] = "train"
+    df.loc[150:, "is_fraud"] = 0  # validation without a single fraud
+    monkeypatch.setattr(train_mod, "load_features", lambda *a, **k: df)
+    with pytest.raises(ValueError, match="validation split .* no fraud"):
+        train_mod.load_split_data(
+            load_config(Path(__file__).parents[1] / "configs" / "config.yaml")
+        )

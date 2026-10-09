@@ -1,5 +1,9 @@
 # FraudLens
 
+[![CI](https://github.com/YASHR2002/fraudlens/actions/workflows/ci.yml/badge.svg)](https://github.com/YASHR2002/fraudlens/actions/workflows/ci.yml)
+![Coverage](https://img.shields.io/badge/coverage-92%25-brightgreen)
+![Python](https://img.shields.io/badge/python-3.11-blue)
+
 **Explainable real-time credit card fraud detection: from SQL features to a monitored, explained scoring API.**
 
 > **Status: in progress.** Built phase by phase; see [PROJECT_PLAN.md](PROJECT_PLAN.md).

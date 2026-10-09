@@ -109,5 +109,10 @@ testpaths = ["tests"]
 addopts = "-ra -q"
 
 [tool.coverage.run]
-source = ["fraudlens"]
+# Path-based (not package-based) so the dashboard counts too: Streamlit runs it by file path.
+source = ["src/fraudlens"]
 branch = true
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true

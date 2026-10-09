@@ -638,3 +638,37 @@ MLflow ~330 MB, API ~530 MB (1 GB limit), dashboard ~70 MB: about 0.93 GB of Doc
      larger issue remains the threshold drift found in D6.4 as the fraud rate changes.
 - Harmless `invalid value encountered in divide` warnings come from Evidently on columns with
   zero variance in a month's sample.
+
+---
+
+## Phase 10: Testing and CI
+
+### D10.1 What the tests cover (180 tests, 92% line + branch coverage)
+
+| Area | Tests |
+|---|---|
+| Features | hand-computed window edges, ties, no-history and leap-day ages; haversine; parity of Python vs SQL on the synthetic fixture (CI) and on 40 real cards (locally) |
+| Thresholds and gate | cost/F1 thresholds on worked examples; every promotion rule and tie-break; a registry scenario on a throwaway SQLite MLflow |
+| API | every endpoint with FastAPI's TestClient and a tiny model: validation (422), out-of-order (409), duplicates, batch limits, metrics, readiness when loading fails |
+| LLM | Gemini always mocked: cache, retry policy, permanent errors, invalid replies, fallback wording |
+| Dashboard | the real Streamlit script run headlessly against the in-process API (Streamlit's AppTest) |
+| Workflow | one end-to-end test runs the real CLI in a throwaway project: download (detect) -> validate -> convert -> train -> register -> promote -> evaluate (once, refused twice) -> export -> explain -> SHAP -> fairness -> drift -> build-state (0 parity mismatches) -> Kaggle bundle -> production entry point |
+
+- **Not unit-tested:** `load_db` and `features/build`, which need a live PostgreSQL; they are
+  exercised by the real pipeline runs (row counts and parity checked there).
+- **Bugs the new tests found:** a split without fraud crashed evaluation with a bare
+  `ZeroDivisionError`; training now stops with a clear message pointing at the split dates.
+- **Offline by design:** a clean copy of the repository (no data, no `.env`, no services) gives
+  179 passed and 1 skipped (real-data parity).
+
+### D10.2 Coverage measured by path
+
+- `[tool.coverage.run] source = ["src/fraudlens"]` instead of the package name: Streamlit runs
+  the dashboard by file path, which package-based coverage did not trace (0% -> 94%).
+
+### D10.3 CI pipeline (GitHub Actions)
+
+- On push to `main`, pull requests and manual runs: `uv sync --frozen` (Python 3.11, cached),
+  `ruff check`, `ruff format --check`, `pytest` with coverage (summary written to the run page,
+  `coverage.xml` uploaded), then both Docker images built with BuildKit layer caching (never
+  pushed). Least-privilege token (`contents: read`); superseded runs are cancelled.
