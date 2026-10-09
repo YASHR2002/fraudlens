@@ -199,3 +199,36 @@ def test_unavailable_model_source(monkeypatch: pytest.MonkeyPatch) -> None:
     get_env.cache_clear()
     with pytest.raises(ModelLoadError, match="not available yet"):
         load_model_bundle(get_config(), get_env())
+
+
+def test_huggingface_round_trip(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """push-model's staged repo is exactly what MODEL_SOURCE=huggingface loads (Hub mocked)."""
+    champion = project / "models" / "champion"
+    processed = project / "data" / "processed"
+    if (
+        not (champion / "metadata.json").is_file()
+        or not (processed / "card_state.json.gz").is_file()
+    ):
+        pytest.skip("needs the export and state from test_full_workflow")
+    import huggingface_hub
+
+    from fraudlens.api.main import build_services
+    from fraudlens.deploy.hub import stage_model
+
+    staged = stage_model(processed, champion, "https://github.com/x/y", "someone/fraudlens-model")
+    calls: list[dict] = []
+
+    def fake_download(**kwargs):
+        calls.append(kwargs)
+        return str(staged)
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_download)
+    monkeypatch.setenv("MODEL_SOURCE", "huggingface")
+    monkeypatch.setenv("HF_REPO_ID", "someone/fraudlens-model")
+    monkeypatch.chdir(project.parent)  # the state must come from the download, not data/
+    get_env.cache_clear()
+    services = build_services()
+    assert calls == [{"repo_id": "someone/fraudlens-model", "token": None}]
+    assert services.bundle.source == "huggingface" and services.bundle.state_dir == staged / "state"
+    assert services.demo is not None and len(services.demo) > 0
+    assert "PR-AUC" in (staged / "README.md").read_text(encoding="utf-8")

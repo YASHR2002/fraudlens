@@ -8,6 +8,18 @@
 
 > **Status: in progress.** Built phase by phase; see [PROJECT_PLAN.md](PROJECT_PLAN.md).
 
+## Live demo
+
+- **Dashboard:** https://huggingface.co/spaces/YASHR2002/fraudlens (Hugging Face Spaces)
+- **Scoring API:** https://fraudlens-api.onrender.com/docs (Render free tier)
+- **Model:** https://huggingface.co/YASHR2002/fraudlens-model
+
+> The API runs on Render's free tier (0.1 CPU, 512 MB), which **sleeps after 15 minutes without
+> traffic**. The first request after that wakes it up and loads the model, which takes about
+> **2-3 minutes**; the dashboard waits and shows a message meanwhile. The first explained
+> prediction then takes ~40 s more (building the SHAP explainer once), after which scoring is
+> ~50 ms and explanations ~1 s plus the LLM call.
+
 ## Business problem
 
 A card issuer must flag fraudulent transactions in real time without burying its fraud

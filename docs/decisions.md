@@ -672,3 +672,45 @@ MLflow ~330 MB, API ~530 MB (1 GB limit), dashboard ~70 MB: about 0.93 GB of Doc
   `ruff check`, `ruff format --check`, `pytest` with coverage (summary written to the run page,
   `coverage.xml` uploaded), then both Docker images built with BuildKit layer caching (never
   pushed). Least-privilege token (`contents: read`); superseded runs are cancelled.
+
+## Phase 11: free public demo
+
+### D11.1 Where each piece runs
+
+| Piece | Host | Why |
+|---|---|---|
+| Model, threshold, card state, demo set | Hugging Face **model repo** | free, versioned (each upload is a Git commit), public model card; no MLflow server needed in the cloud |
+| Scoring API | **Render** free web service (Docker) | runs the exact API image from this repo; deploys only after CI passes (`autoDeployTrigger: checksPass` in `render.yaml`) |
+| Dashboard | Hugging Face **Docker Space** | free, always reachable; a tiny image (Streamlit, Plotly, httpx) that only talks to the API over HTTP, as locally |
+
+- The API downloads the Hub repo at startup (`MODEL_SOURCE=huggingface`), so a new model is
+  published with `fraudlens export-model; fraudlens push-model` and picked up by the next restart,
+  with no rebuild. Hugging Face replaced the local MLflow registry for the demo, not for training.
+- The model is loaded straight from its **skops** file with the same trusted-type list as
+  training (scores identical to the MLflow loader on 5,000 rows), so the cloud API never imports
+  MLflow.
+- Infrastructure as code: `render.yaml` (Render Blueprint) defines the service; secrets
+  (`GOOGLE_API_KEY`, `HF_TOKEN`) are `sync: false`, entered once in Render, never in Git.
+  The Space's `API_URL` is set as a Space variable by `fraudlens publish-space`.
+
+### D11.2 Fitting the free tier (measured locally with `--cpus 0.1 --memory 512m`)
+
+- **Memory:** ~410 MB peak while loading, ~350 MB serving (limit 512 MB). Possible because the
+  API image has no MLflow server, matplotlib is imported lazily, and SHAP's explainer is built
+  on first use.
+- **Cold start:** ~150 s from container start to ready at 0.1 CPU (importing NumPy, pandas,
+  LightGBM and SHAP, and rebuilding 983 card states) plus the Hub download. Render free
+  instances sleep after 15 minutes idle, so the README warns visitors, and the dashboard waits
+  up to 3 minutes with a "waking up" message instead of failing after 60 s.
+- **First explanation:** ~38 s once per start (SHAP TreeExplainer setup on 0.1 CPU), then ~1 s.
+  Not pre-warmed at startup, which would make every wake-up slower for visitors who only score.
+- The container listens on `$PORT` (Render sets it), falling back to 8000 locally and in Compose.
+
+### D11.3 What is public
+
+- Uploaded: the model, its metadata (metrics, threshold, global feature importance, fairness summary),
+  the feature list, card state and 924 demo transactions. All of it derives from the
+  synthetic, CC0 Sparkov data; no real cardholder data exists anywhere in the project.
+- Not uploaded: the raw dataset, `.env`, MLflow runs. The Hugging Face token is read from
+  `.env` and only used to authenticate.
+

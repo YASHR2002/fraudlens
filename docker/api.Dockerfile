@@ -29,7 +29,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
 USER app
 EXPOSE 8000
 # Model state and demo data are mounted at /app/data/processed; the model comes from MLflow
-# (MODEL_SOURCE=mlflow) or a mounted export in /app/models (MODEL_SOURCE=local).
+# (MODEL_SOURCE=mlflow), a mounted export in /app/models (MODEL_SOURCE=local) or the Hugging
+# Face Hub together with the state (MODEL_SOURCE=huggingface, the public demo on Render).
+# PORT: set by hosting platforms such as Render (default 10000 there); 8000 locally.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"
-CMD ["uvicorn", "fraudlens.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://localhost:' + os.environ.get('PORT', '8000') + '/ready')"
+CMD ["sh", "-c", "exec uvicorn fraudlens.api.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log"]

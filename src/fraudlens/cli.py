@@ -632,6 +632,54 @@ def export_model() -> None:
                f"{meta['threshold']:.4f}, to {out}")  # fmt: skip
 
 
+GITHUB_URL = "https://github.com/YASHR2002/fraudlens"
+
+
+def _hf_token() -> str:
+    token = get_env().hf_token
+    if token is None or not token.get_secret_value():
+        typer.echo("HF_TOKEN is not set: add a Hugging Face write token to .env", err=True)
+        raise typer.Exit(1)
+    return token.get_secret_value()
+
+
+@app.command("push-model")
+def push_model_cmd(
+    repo_id: Annotated[
+        str | None, typer.Option(help="Model repo, e.g. user/fraudlens-model; default HF_REPO_ID.")
+    ] = None,
+    private: Annotated[bool, typer.Option(help="Create the repo as private.")] = False,
+) -> None:
+    """Upload the exported champion, card state and demo set to a Hugging Face model repo."""
+    from fraudlens.deploy.hub import push_model
+
+    config, env = get_config(), get_env()
+    repo = repo_id or env.hf_repo_id
+    if not repo:
+        typer.echo("Pass --repo-id or set HF_REPO_ID in .env", err=True)
+        raise typer.Exit(1)
+    champion = config.resolve(config.paths.models) / "champion"
+    with log_duration("push model to the Hugging Face Hub", logger):
+        url = push_model(config.resolve(config.paths.processed), champion, repo, _hf_token(),
+                         GITHUB_URL, private)  # fmt: skip
+    typer.echo(f"Uploaded to https://huggingface.co/{repo} ({url})")
+
+
+@app.command("publish-space")
+def publish_space_cmd(
+    space_id: Annotated[str, typer.Option(help="Space id, e.g. user/fraudlens.")],
+    api_url: Annotated[str, typer.Option(help="Public API URL, e.g. https://x.onrender.com.")],
+) -> None:
+    """Deploy the Streamlit dashboard as a Hugging Face Docker Space pointed at the API."""
+    from fraudlens.deploy.hub import publish_space
+
+    dashboard = Path(__file__).parent / "dashboard" / "app.py"
+    with log_duration("publish dashboard Space", logger):
+        url = publish_space(dashboard, space_id, api_url.rstrip("/"), _hf_token(), GITHUB_URL)
+    typer.echo(f"Space: https://huggingface.co/spaces/{space_id} ({url}); it builds in a few "
+               "minutes.")  # fmt: skip
+
+
 @app.command("replay")
 def replay_cmd(
     speed: Annotated[float, typer.Option(help="Transactions per second.")] = 20.0,

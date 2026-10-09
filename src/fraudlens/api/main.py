@@ -27,7 +27,8 @@ def build_services() -> Services:
     config, env = get_config(), get_env()
     bundle = load_model_bundle(config, env)
     set_serving_threads(bundle.pipeline, n_jobs=1)  # single-row scoring: no thread start-up
-    processed = config.resolve(config.paths.processed)
+    # The card state and demo set travel with the model when it comes from Hugging Face.
+    processed = bundle.state_dir or config.resolve(config.paths.processed)
     store, meta = load_state(processed / STATE_FILE)
     demo_path = processed / DEMO_FILE
     demo = pd.read_parquet(demo_path) if demo_path.is_file() else None

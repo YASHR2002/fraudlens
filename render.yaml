@@ -1,0 +1,24 @@
+# Render Blueprint: the public demo API (free plan: 512 MB RAM, 0.1 CPU, sleeps after 15 min idle).
+# Create it in the Render dashboard: New > Blueprint > this repository. Values marked
+# `sync: false` are secrets entered there once; they never live in Git.
+services:
+  - type: web
+    name: fraudlens-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./docker/api.Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass  # deploy a commit only after GitHub CI passes
+    envVars:
+      - key: MODEL_SOURCE
+        value: huggingface  # model, threshold, card state and demo set from the Hub
+      - key: HF_REPO_ID
+        sync: false  # e.g. <hf-username>/fraudlens-model
+      - key: HF_TOKEN
+        sync: false  # read token; only needed if the model repo is private
+      - key: GOOGLE_API_KEY
+        sync: false  # Gemini key for analyst notes (template fallback without it)
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash-lite

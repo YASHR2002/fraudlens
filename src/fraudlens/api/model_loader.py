@@ -4,7 +4,13 @@
 
 * ``mlflow`` (default): the registered model's ``@champion`` version from the MLflow server.
 * ``local``: an exported copy in ``models/champion/`` (``fraudlens export-model``, Phase 9).
-* ``huggingface`` / ``s3``: added in Phases 11 and 12.
+* ``huggingface``: the same export downloaded from a Hugging Face Hub model repo (``HF_REPO_ID``),
+  together with the card-state snapshot and demo transactions (``fraudlens push-model``).
+* ``s3``: added in Phase 12.
+
+Exported models are loaded straight from their skops file, with the same trusted-type list used
+when they were saved, so serving does not need to import MLflow (less memory, faster start on a
+small free instance).
 
 The decision threshold comes from the ``FRAUD_THRESHOLD`` environment variable if set,
 otherwise from the model version's ``threshold`` tag.
@@ -18,18 +24,23 @@ import logging
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sklearn.pipeline import Pipeline
 
 from fraudlens.config import AppConfig, EnvSettings
-from fraudlens.explain.shap_explainer import ShapExplainer
+
+if TYPE_CHECKING:  # SHAP is imported on first use: the fast path never needs it
+    from fraudlens.explain.shap_explainer import ShapExplainer
 
 logger = logging.getLogger(__name__)
 
 METRIC_TAGS = ("val_pr_auc", "val_precision", "val_recall", "val_cost", "test_pr_auc",
                "test_precision", "test_recall", "test_cost")  # fmt: skip
 LOCAL_METADATA = "metadata.json"
+SKOPS_FILE = "model.skops"
+HF_MODEL_DIR = "champion"  # layout of the Hugging Face model repo (see fraudlens.deploy.hub)
+HF_STATE_DIR = "state"
 
 
 class ModelLoadError(RuntimeError):
@@ -53,6 +64,7 @@ class ModelBundle:
     global_importance: dict[str, float] | None = None
     fairness: dict[str, dict[str, float]] | None = None
     threshold_override: float | None = None  # FRAUD_THRESHOLD
+    state_dir: Path | None = None  # where the card state / demo set came with the model (HF)
 
     @property
     def threshold(self) -> float:
@@ -67,6 +79,8 @@ class ModelBundle:
     @cached_property
     def explainer(self) -> ShapExplainer:
         """SHAP explainer, built on first use (only /predict_explained needs it)."""
+        from fraudlens.explain.shap_explainer import ShapExplainer
+
         return ShapExplainer(self.pipeline)
 
     def metadata(self) -> dict[str, Any]:
@@ -147,22 +161,33 @@ def load_from_mlflow(config: AppConfig, env: EnvSettings) -> ModelBundle:
     )
 
 
-def load_from_local(path: Path, env: EnvSettings) -> ModelBundle:
-    """An exported model directory: an MLflow model plus ``metadata.json``."""
-    import mlflow
+def load_pipeline(model_dir: Path, family: str) -> Pipeline:
+    """Load an exported MLflow sklearn model, preferably straight from its skops file."""
+    skops_path = model_dir / SKOPS_FILE
+    if skops_path.is_file():
+        import skops.io as sio
 
+        from fraudlens.models.estimators import SKOPS_TRUSTED_TYPES
+
+        return sio.load(skops_path, trusted=SKOPS_TRUSTED_TYPES[family])
+    import mlflow  # older exports in another serialisation format
+
+    return mlflow.sklearn.load_model(str(model_dir))
+
+
+def load_from_local(path: Path, env: EnvSettings, source: str = "local") -> ModelBundle:
+    """An exported model directory: ``model/`` (MLflow format) plus ``metadata.json``."""
     meta_path = path / LOCAL_METADATA
     if not meta_path.is_file():
         raise ModelLoadError(f"{meta_path} not found; run `fraudlens export-model` first")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    pipeline = mlflow.sklearn.load_model(str(path / "model"))
     return ModelBundle(
-        pipeline=pipeline,
+        pipeline=load_pipeline(path / "model", meta["family"]),
         model_threshold=float(meta["threshold"]),
         name=meta["name"],
         version=str(meta["version"]),
         family=meta["family"],
-        source="local",
+        source=source,
         alias=meta.get("alias"),
         run_id=meta.get("run_id"),
         trained_utc=meta.get("trained_utc"),
@@ -173,15 +198,34 @@ def load_from_local(path: Path, env: EnvSettings) -> ModelBundle:
     )
 
 
+def load_from_huggingface(env: EnvSettings) -> ModelBundle:
+    """Download the model repo (model, metadata, card state, demo set) and load it."""
+    from huggingface_hub import snapshot_download
+
+    if not env.hf_repo_id:
+        raise ModelLoadError(
+            "MODEL_SOURCE=huggingface needs HF_REPO_ID (e.g. user/fraudlens-model)"
+        )
+    token = env.hf_token.get_secret_value() if env.hf_token else None
+    try:
+        root = Path(snapshot_download(repo_id=env.hf_repo_id, token=token))
+    except Exception as exc:  # noqa: BLE001 - network, auth or missing repo
+        raise ModelLoadError(f"cannot download {env.hf_repo_id} from Hugging Face: {exc}") from exc
+    bundle = load_from_local(root / HF_MODEL_DIR, env, source="huggingface")
+    bundle.state_dir = root / HF_STATE_DIR
+    logger.info("Loaded %s v%s from Hugging Face %s", bundle.name, bundle.version, env.hf_repo_id)
+    return bundle
+
+
 def load_model_bundle(config: AppConfig, env: EnvSettings) -> ModelBundle:
     """Load the model from ``MODEL_SOURCE``."""
     if env.model_source == "mlflow":
         return load_from_mlflow(config, env)
     if env.model_source == "local":
         return load_from_local(config.resolve(config.paths.models) / "champion", env)
-    raise ModelLoadError(
-        f"MODEL_SOURCE={env.model_source!r} is not available yet (added in Phase 11/12)."
-    )
+    if env.model_source == "huggingface":
+        return load_from_huggingface(env)
+    raise ModelLoadError(f"MODEL_SOURCE={env.model_source!r} is not available yet (Phase 12).")
 
 
 def export_champion(config: AppConfig, env: EnvSettings, out_dir: Path) -> dict[str, Any]:

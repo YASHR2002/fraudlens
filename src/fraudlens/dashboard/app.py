@@ -30,8 +30,8 @@ st.set_page_config(page_title="FraudLens", page_icon=":mag:", layout="wide")
 @st.cache_resource
 def client() -> httpx.Client:
     # Generous timeout: /predict_explained includes an LLM call (a few seconds), and a free
-    # hosting tier may need time to wake up.
-    return httpx.Client(base_url=API_URL, timeout=60.0)
+    # hosting tier may need a minute or two to wake up (and load the model) on the first request.
+    return httpx.Client(base_url=API_URL, timeout=httpx.Timeout(180.0, connect=30.0))
 
 
 def api_get(path: str, **params: Any) -> Any:
@@ -251,7 +251,9 @@ def main() -> None:
     st.title("FraudLens")
     st.caption("Explainable real-time credit card fraud detection")
     try:
-        info = model_info()
+        with st.spinner("Connecting to the scoring API. On the free hosting tier it sleeps when "
+                        "idle, so the first visit can take a minute or two..."):  # fmt: skip
+            info = model_info()
     except httpx.HTTPError as exc:
         st.error(f"Cannot reach the scoring API at {API_URL}: {exc}. Is it running? "
                  "(`docker compose --profile serve up -d`)")  # fmt: skip
