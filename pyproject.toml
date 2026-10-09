@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Explainable real-time credit card fraud detection: SQL features, cost-based thresholds, MLflow, SHAP + LLM explanations, FastAPI, monitoring."
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
-license = { text = "MIT" }
 # Core: needed by every component (training, API, CLI). Model libraries live here because
 # the API must load the same XGBoost/LightGBM/sklearn models and explain them with SHAP.
 dependencies = [
