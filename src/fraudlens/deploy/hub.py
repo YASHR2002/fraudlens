@@ -1,10 +1,8 @@
-"""Publish the demo to the Hugging Face Hub.
+"""Publish the demo model to the Hugging Face Hub.
 
-* :func:`push_model` uploads a **model repo**: the exported champion (skops model + metadata with
-  threshold and metrics), the feature list, the card-state snapshot and the demo transactions,
-  plus a model card. The Render API downloads it at startup (``MODEL_SOURCE=huggingface``).
-* :func:`publish_space` uploads a **Docker Space** running the Streamlit dashboard, pointed at the
-  public API through the ``API_URL`` Space variable.
+:func:`push_model` uploads a **model repo**: the exported champion (skops model + metadata with
+threshold and metrics), the feature list, the card-state snapshot and the demo transactions,
+plus a model card. The Render API downloads it at startup (``MODEL_SOURCE=huggingface``).
 
 Files are staged in a temporary folder and uploaded in one commit. Nothing secret is uploaded:
 the token is only used to authenticate.
@@ -15,7 +13,6 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
-from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +20,6 @@ from fraudlens.api.model_loader import HF_MODEL_DIR, HF_STATE_DIR, LOCAL_METADAT
 from fraudlens.features.feature_names import FEATURES
 
 STATE_FILES = ("card_state.json.gz", "demo_transactions.parquet")
-SPACE_REQUIREMENTS = ("streamlit", "plotly", "httpx")
 
 
 def model_card(meta: dict[str, Any], repo_id: str, github_url: str) -> str:
@@ -113,75 +109,6 @@ def push_model(
             repo_id=repo_id, folder_path=str(stage), repo_type="model",
             commit_message=f"FraudLens {meta['name']} v{meta['version']} ({meta['family']})",
         )  # fmt: skip
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
-    return str(getattr(info, "commit_url", info))
-
-
-SPACE_DOCKERFILE = """\
-# FraudLens dashboard on Hugging Face Spaces (Docker SDK). Talks to the API at $API_URL.
-FROM python:3.11-slim
-RUN useradd --create-home --uid 1000 user
-WORKDIR /home/user/app
-COPY --chown=user requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY --chown=user app.py .
-USER user
-ENV PYTHONUNBUFFERED=1 STREAMLIT_SERVER_HEADLESS=true STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-EXPOSE 8501
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
-"""
-
-
-def space_readme(api_url: str, github_url: str) -> str:
-    return f"""---
-title: FraudLens
-emoji: 🔍
-colorFrom: blue
-colorTo: red
-sdk: docker
-app_port: 8501
-pinned: true
-short_description: Explainable credit card fraud scoring with SHAP and LLM notes
----
-
-# FraudLens: explainable fraud detection demo
-
-Pick a demo card transaction, score it with the fraud model and read why: a SHAP waterfall of the
-factors and an analyst note written by an LLM from those factors only.
-
-- Scoring API: {api_url}/docs (Render free tier: the first request after a quiet spell can take a
-  minute or two while it wakes up)
-- Code, evaluation and design decisions: {github_url}
-
-Synthetic data (Sparkov); a portfolio project, not a production fraud system.
-"""
-
-
-def stage_space(dashboard_app: Path, api_url: str, github_url: str) -> Path:
-    """Assemble the Space contents (dashboard script, pinned requirements, Dockerfile, card)."""
-    stage = Path(tempfile.mkdtemp(prefix="fraudlens-space-"))
-    shutil.copy2(dashboard_app, stage / "app.py")
-    reqs = "\n".join(f"{pkg}=={version(pkg)}" for pkg in SPACE_REQUIREMENTS)
-    (stage / "requirements.txt").write_text(reqs + "\n", encoding="utf-8")
-    (stage / "Dockerfile").write_text(SPACE_DOCKERFILE, encoding="utf-8")
-    (stage / "README.md").write_text(space_readme(api_url, github_url), encoding="utf-8")
-    return stage
-
-
-def publish_space(dashboard_app: Path, space_id: str, api_url: str, token: str,
-                  github_url: str) -> str:  # fmt: skip
-    """Create (if needed) and upload the dashboard Space; set its API_URL variable."""
-    from huggingface_hub import HfApi
-
-    api = HfApi(token=token)
-    stage = stage_space(dashboard_app, api_url, github_url)
-    try:
-        api.create_repo(space_id, repo_type="space", space_sdk="docker", exist_ok=True)
-        api.add_space_variable(space_id, "API_URL", api_url,
-                               description="Public FraudLens scoring API")  # fmt: skip
-        info = api.upload_folder(repo_id=space_id, folder_path=str(stage), repo_type="space",
-                                 commit_message="FraudLens dashboard")  # fmt: skip
     finally:
         shutil.rmtree(stage, ignore_errors=True)
     return str(getattr(info, "commit_url", info))

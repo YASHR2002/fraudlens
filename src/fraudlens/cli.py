@@ -665,21 +665,6 @@ def push_model_cmd(
     typer.echo(f"Uploaded to https://huggingface.co/{repo} ({url})")
 
 
-@app.command("publish-space")
-def publish_space_cmd(
-    space_id: Annotated[str, typer.Option(help="Space id, e.g. user/fraudlens.")],
-    api_url: Annotated[str, typer.Option(help="Public API URL, e.g. https://x.onrender.com.")],
-) -> None:
-    """Deploy the Streamlit dashboard as a Hugging Face Docker Space pointed at the API."""
-    from fraudlens.deploy.hub import publish_space
-
-    dashboard = Path(__file__).parent / "dashboard" / "app.py"
-    with log_duration("publish dashboard Space", logger):
-        url = publish_space(dashboard, space_id, api_url.rstrip("/"), _hf_token(), GITHUB_URL)
-    typer.echo(f"Space: https://huggingface.co/spaces/{space_id} ({url}); it builds in a few "
-               "minutes.")  # fmt: skip
-
-
 @app.command("replay")
 def replay_cmd(
     speed: Annotated[float, typer.Option(help="Transactions per second.")] = 20.0,

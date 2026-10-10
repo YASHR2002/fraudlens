@@ -10,8 +10,8 @@
 
 ## Live demo
 
-- **Dashboard:** https://huggingface.co/spaces/YASHR2002/fraudlens (Hugging Face Spaces)
-- **Scoring API:** https://fraudlens-api.onrender.com/docs (Render free tier)
+- **Dashboard:** https://fraudlens.streamlit.app (Streamlit Community Cloud)
+- **Scoring API:** https://fraudlens-api-bl55.onrender.com/docs (Render free tier)
 - **Model:** https://huggingface.co/YASHR2002/fraudlens-model
 
 > The API runs on Render's free tier (0.1 CPU, 512 MB), which **sleeps after 15 minutes without

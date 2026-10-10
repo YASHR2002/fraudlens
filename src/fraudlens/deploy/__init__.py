@@ -1,1 +1,1 @@
-"""Deployment helpers: Hugging Face Hub model repo and dashboard Space."""
+"""Deployment helpers: the Hugging Face Hub model repo used by the public demo API."""

@@ -74,29 +74,6 @@ def test_push_model_uploads_and_cleans_up(exported, fake_api: MagicMock) -> None
     assert not Path(kwargs["folder_path"]).exists()  # staging folder removed
 
 
-def test_publish_space(fake_api: MagicMock) -> None:
-    dashboard = ROOT / "src" / "fraudlens" / "dashboard" / "app.py"
-    seen: dict[str, str] = {}
-
-    def capture(**kwargs):
-        folder = Path(kwargs["folder_path"])
-        seen.update({p.name: p.read_text(encoding="utf-8") for p in folder.iterdir()})
-        return MagicMock(commit_url="c")
-
-    fake_api.upload_folder.side_effect = capture
-    hub.publish_space(dashboard, "u/fraudlens", "https://api.example.com", "tok", "g")
-    assert set(seen) == {"app.py", "Dockerfile", "requirements.txt", "README.md"}
-    front = yaml.safe_load(seen["README.md"].split("---")[1])
-    assert front["sdk"] == "docker" and front["app_port"] == 8501
-    assert {line.split("==")[0] for line in seen["requirements.txt"].split()} == {
-        "streamlit", "plotly", "httpx"}  # fmt: skip
-    assert "8501" in seen["Dockerfile"] and "--uid 1000" in seen["Dockerfile"]
-    fake_api.create_repo.assert_called_once_with("u/fraudlens", repo_type="space",
-                                                 space_sdk="docker", exist_ok=True)  # fmt: skip
-    fake_api.add_space_variable.assert_called_once()
-    assert fake_api.add_space_variable.call_args.args[1:] == ("API_URL", "https://api.example.com")
-
-
 def test_huggingface_source_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ModelLoadError, match="needs HF_REPO_ID"):
         load_from_huggingface(EnvSettings(_env_file=None, model_source="huggingface"))
@@ -140,10 +117,16 @@ def test_cli_commands(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     get_env.cache_clear()
     pushed: list[tuple] = []
     monkeypatch.setattr(hub, "push_model", lambda *a: pushed.append(a) or "c1")
-    monkeypatch.setattr(hub, "publish_space", lambda *a: pushed.append(a) or "c2")
     out = runner.invoke(app, ["push-model", "--repo-id", "u/m"], catch_exceptions=False).output
     assert "huggingface.co/u/m" in out and pushed[0][2:4] == ("u/m", "tok")
-    out = runner.invoke(app, ["publish-space", "--space-id", "u/s", "--api-url", "https://a/"],
-                        catch_exceptions=False).output  # fmt: skip
-    assert "spaces/u/s" in out and pushed[1][1:3] == ("u/s", "https://a")
     get_env.cache_clear()
+
+
+def test_streamlit_cloud_requirements_match_the_lock() -> None:
+    """Streamlit Community Cloud installs these; keep them equal to the tested versions."""
+    from importlib.metadata import version
+
+    reqs = (ROOT / "src" / "fraudlens" / "dashboard" / "requirements.txt").read_text("utf-8")
+    pins = dict(line.split("==") for line in reqs.split() if "==" in line)
+    assert set(pins) == {"streamlit", "plotly", "httpx", "pandas"}
+    assert all(pins[pkg] == version(pkg) for pkg in pins)

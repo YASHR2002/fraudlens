@@ -681,7 +681,7 @@ MLflow ~330 MB, API ~530 MB (1 GB limit), dashboard ~70 MB: about 0.93 GB of Doc
 |---|---|---|
 | Model, threshold, card state, demo set | Hugging Face **model repo** | free, versioned (each upload is a Git commit), public model card; no MLflow server needed in the cloud |
 | Scoring API | **Render** free web service (Docker) | runs the exact API image from this repo; deploys only after CI passes (`autoDeployTrigger: checksPass` in `render.yaml`) |
-| Dashboard | Hugging Face **Docker Space** | free, always reachable; a tiny image (Streamlit, Plotly, httpx) that only talks to the API over HTTP, as locally |
+| Dashboard | **Streamlit Community Cloud** | free, deploys from this GitHub repo on every push; installs only `src/fraudlens/dashboard/requirements.txt` (Streamlit, Plotly, httpx, pandas, pinned to the lock) because the dashboard only talks to the API over HTTP |
 
 - The API downloads the Hub repo at startup (`MODEL_SOURCE=huggingface`), so a new model is
   published with `fraudlens export-model; fraudlens push-model` and picked up by the next restart,
@@ -691,7 +691,12 @@ MLflow ~330 MB, API ~530 MB (1 GB limit), dashboard ~70 MB: about 0.93 GB of Doc
   MLflow.
 - Infrastructure as code: `render.yaml` (Render Blueprint) defines the service; secrets
   (`GOOGLE_API_KEY`, `HF_TOKEN`) are `sync: false`, entered once in Render, never in Git.
-  The Space's `API_URL` is set as a Space variable by `fraudlens publish-space`.
+  The dashboard's `API_URL` is a Streamlit Cloud secret (top-level secrets are exposed as
+  environment variables, which the dashboard already reads).
+- **Plan change:** the plan put the dashboard on a Hugging Face Space, but Hugging Face now
+  requires a paid PRO subscription to run Docker or Gradio Spaces on its free CPU (the upload was
+  refused with HTTP 402; only static Spaces are free). Streamlit Community Cloud is free for
+  public apps and builds straight from GitHub, so no image or upload command is needed.
 
 ### D11.2 Fitting the free tier (measured locally with `--cpus 0.1 --memory 512m`)
 

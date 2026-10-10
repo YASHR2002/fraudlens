@@ -1,0 +1,7 @@
+# Streamlit Community Cloud installs this file (it looks next to the app first).
+# The dashboard only talks to the API over HTTP, so it needs none of the ML stack.
+# Pinned to the versions in uv.lock; tests/test_deploy.py checks they stay equal.
+streamlit==1.65.0
+plotly==5.24.1
+httpx==0.28.1
+pandas==3.0.6

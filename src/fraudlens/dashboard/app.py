@@ -1,7 +1,7 @@
 """FraudLens analyst dashboard (Streamlit).
 
 Standalone by design: it imports no FraudLens code and talks to the scoring API only over HTTP
-(``API_URL``), so it can be deployed separately (Docker, Hugging Face Spaces).
+(``API_URL``), so it can be deployed separately (Docker, Streamlit Community Cloud).
 
 Run locally:  uv run streamlit run src/fraudlens/dashboard/app.py
 """
