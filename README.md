@@ -10,15 +10,14 @@
 
 ## Live demo
 
-- **Dashboard:** https://fraudlens.streamlit.app (Streamlit Community Cloud)
+- **Dashboard:** https://fraudlens-c2fisgv4xtkojkqdzw4cpe.streamlit.app (Streamlit Community Cloud)
 - **Scoring API:** https://fraudlens-api-bl55.onrender.com/docs (Render free tier)
 - **Model:** https://huggingface.co/YASHR2002/fraudlens-model
 
 > The API runs on Render's free tier (0.1 CPU, 512 MB), which **sleeps after 15 minutes without
 > traffic**. The first request after that wakes it up and loads the model, which takes about
-> **2-3 minutes**; the dashboard waits and shows a message meanwhile. The first explained
-> prediction then takes ~40 s more (building the SHAP explainer once), after which scoring is
-> ~50 ms and explanations ~1 s plus the LLM call.
+> **2-3 minutes**; the dashboard waits and shows a message meanwhile. Once awake, scoring takes
+> ~0.1 s and an explained prediction ~1.5 s including the Gemini call (measured on Render).
 
 ## Business problem
 

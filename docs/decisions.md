@@ -707,8 +707,11 @@ MLflow ~330 MB, API ~530 MB (1 GB limit), dashboard ~70 MB: about 0.93 GB of Doc
   LightGBM and SHAP, and rebuilding 983 card states) plus the Hub download. Render free
   instances sleep after 15 minutes idle, so the README warns visitors, and the dashboard waits
   up to 3 minutes with a "waking up" message instead of failing after 60 s.
-- **First explanation:** ~38 s once per start (SHAP TreeExplainer setup on 0.1 CPU), then ~1 s.
-  Not pre-warmed at startup, which would make every wake-up slower for visitors who only score.
+- **First explanation:** ~38 s once per start in the local 0.1-CPU simulation (SHAP
+  TreeExplainer setup), but 6 s on Render, whose CPU share bursts above 0.1. Not pre-warmed at
+  startup, which would slow every wake-up for visitors who only score.
+- **Measured on Render (live):** `/predict` ~0.1 s and `/predict_explained` ~1.7 s end to end
+  (Gemini note included, `explanation_source: llm`), from India to the Singapore region.
 - The container listens on `$PORT` (Render sets it), falling back to 8000 locally and in Compose.
 
 ### D11.3 What is public
