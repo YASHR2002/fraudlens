@@ -1,0 +1,61 @@
+# FraudLens on one AWS EC2 t3.micro (1 GiB RAM + 2 GiB swap): API + Prometheus + Grafana.
+# Started by aws/user-data.sh at first boot, from a clone of this repository in /opt/fraudlens.
+# The API image comes from ECR and the model bundle from S3, both read with the instance role.
+# Who can reach which port is decided by the security group (docs/aws_deployment.md), not here:
+# 8000 (API) is public; 3000 (Grafana), 9090 (Prometheus) and 22 (SSH) only from the owner's IP.
+
+name: fraudlens
+
+services:
+  api:
+    image: ${API_IMAGE:?set API_IMAGE to the ECR image}
+    env_file:          # GOOGLE_API_KEY, read from SSM Parameter Store at boot
+      - path: secrets.env
+        required: false
+    environment:
+      MODEL_SOURCE: s3
+      S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET}
+      S3_PREFIX: fraudlens-model
+      AWS_REGION: ${AWS_REGION:?set AWS_REGION}
+      GEMINI_MODEL: gemini-3.5-flash-lite
+    ports:
+      - "8000:8000"
+    mem_limit: 640m    # ~350 MB serving, ~410 MB peak while loading
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.13.4
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=2d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus:/prometheus
+    depends_on:
+      - api
+    mem_limit: 160m
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.0.10
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"   # reachable from the owner's IP only, and with a login
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/fraudlens.json
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana:/var/lib/grafana
+    depends_on:
+      - prometheus
+    mem_limit: 192m
+    restart: unless-stopped
+
+volumes:
+  prometheus:
+  grafana:

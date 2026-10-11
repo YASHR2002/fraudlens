@@ -722,3 +722,41 @@ MLflow ~330 MB, API ~530 MB (1 GB limit), dashboard ~70 MB: about 0.93 GB of Doc
 - Not uploaded: the raw dataset, `.env`, MLflow runs. The Hugging Face token is read from
   `.env` and only used to authenticate.
 
+## Phase 12: AWS production blueprint
+
+### D12.1 Design
+
+- **One EC2 t3.micro, Docker Compose, no orchestration.** API (640 MB limit), Prometheus (160 MB)
+  and Grafana (192 MB) fit 1 GiB with a 2 GiB swap file; measured together at ~450 MB in a local
+  run of `docker-compose.aws.yml`. ECS, EKS or a load balancer would add cost and moving parts
+  without teaching anything this single-instance blueprint does not.
+- **The server never builds.** CI-equivalent `docker build` on the PC, push to ECR; the instance
+  only pulls. The image is `linux/amd64`, so t3 (not ARM t4g).
+- **The model comes from S3** with `MODEL_SOURCE=s3`: `fraudlens stage-model` writes the same
+  13-file bundle used for Hugging Face, uploaded with `aws s3 sync`, downloaded by boto3 at start.
+- **No secrets on disk in Git or in the image.** The instance role reads the Gemini key and the
+  Grafana password from SSM Parameter Store (SecureString, free standard tier) at first boot.
+- **Least privilege.** The role can list and read one bucket prefix, pull one ECR repository and
+  read `/fraudlens/*` parameters, nothing else; a test checks there are no wildcard actions.
+- **User data needs no editing.** Region and account come from the instance metadata (IMDSv2),
+  and the bucket name follows the convention `fraudlens-<account>-<region>`.
+- **The instance clones the public repository** for the compose file and the Prometheus and
+  Grafana configuration, so nothing has to be copied over SSH.
+
+### D12.2 Plan corrections and AWS details found while writing it
+
+- **Free plan, not free tier:** accounts opened after 15 July 2025 get credits (up to $200 for
+  6 months); EC2 hours draw them down instead of having a free allowance. A $5 budget with email
+  alerts is the first step; the whole run costs well under $1 of credits.
+- **Public IPv4 is billed** ($0.005/hour) since 2024; no Elastic IP is allocated.
+- **t3 unlimited mode** is the default and bills surplus CPU credits: launched with
+  `CpuCredits=standard`.
+- **IMDSv2 hop limit 2:** containers are one hop behind the host; with the default of 1 the API
+  could not obtain the role's credentials to read S3.
+- **`aws login`** (AWS CLI 2.32+) signs the CLI in with the IAM user's console session and
+  short-lived credentials, instead of creating long-term access keys.
+- **Docker Compose is not packaged for Amazon Linux 2023:** the plugin binary (v5.6.0) is
+  installed from Docker's GitHub releases in the user data.
+- **Grafana on AWS requires a login** (anonymous viewing is only enabled locally), on top of the
+  security group restricting port 3000 to the owner's IP.
+

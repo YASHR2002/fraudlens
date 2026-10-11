@@ -78,3 +78,14 @@ $env:MODEL_SOURCE="local"; uv run fraudlens drift-report   # reports\drift```
 - Grafana: http://127.0.0.1:3000 (dashboard "FraudLens: scoring API"), Prometheus: http://127.0.0.1:9090
 
 Design decisions and trade-offs are logged in [docs/decisions.md](docs/decisions.md).
+
+## AWS production blueprint
+
+[docs/aws_deployment.md](docs/aws_deployment.md) deploys the same API to AWS in ap-south-1, once,
+with PowerShell commands: image in **ECR**, model bundle in **S3** (`MODEL_SOURCE=s3`), secrets in
+**SSM Parameter Store**, a least-privilege **IAM instance role** (no keys on the server), and one
+**EC2 t3.micro** running the API, Prometheus and Grafana from
+[docker-compose.aws.yml](docker-compose.aws.yml), set up at first boot by
+[aws/user-data.sh](aws/user-data.sh). It includes a budget alert, the charges to avoid, a
+verification checklist and a full teardown.
+

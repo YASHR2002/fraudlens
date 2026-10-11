@@ -6,7 +6,8 @@
 * ``local``: an exported copy in ``models/champion/`` (``fraudlens export-model``, Phase 9).
 * ``huggingface``: the same export downloaded from a Hugging Face Hub model repo (``HF_REPO_ID``),
   together with the card-state snapshot and demo transactions (``fraudlens push-model``).
-* ``s3``: added in Phase 12.
+* ``s3``: the same bundle from an S3 bucket (``S3_BUCKET`` / ``S3_PREFIX``), used on AWS with
+  the EC2 instance role, so no keys are stored on the server (Phase 12).
 
 Exported models are loaded straight from their skops file, with the same trusted-type list used
 when they were saved, so serving does not need to import MLflow (less memory, faster start on a
@@ -39,7 +40,7 @@ METRIC_TAGS = ("val_pr_auc", "val_precision", "val_recall", "val_cost", "test_pr
                "test_precision", "test_recall", "test_cost")  # fmt: skip
 LOCAL_METADATA = "metadata.json"
 SKOPS_FILE = "model.skops"
-HF_MODEL_DIR = "champion"  # layout of the Hugging Face model repo (see fraudlens.deploy.hub)
+HF_MODEL_DIR = "champion"  # bundle layout on Hugging Face and S3 (see fraudlens.deploy.hub)
 HF_STATE_DIR = "state"
 
 
@@ -217,6 +218,44 @@ def load_from_huggingface(env: EnvSettings) -> ModelBundle:
     return bundle
 
 
+def load_from_s3(env: EnvSettings, cache_dir: Path | None = None) -> ModelBundle:
+    """Download the bundle under ``s3://S3_BUCKET/S3_PREFIX/`` and load it.
+
+    Credentials come from boto3's default chain: on EC2, the instance role.
+    """
+    import tempfile
+
+    import boto3
+
+    if not env.s3_bucket:
+        raise ModelLoadError("MODEL_SOURCE=s3 needs S3_BUCKET (and optionally S3_PREFIX)")
+    prefix = env.s3_prefix.strip("/") + "/"
+    root = cache_dir or Path(tempfile.mkdtemp(prefix="fraudlens-s3-"))
+    try:
+        s3 = boto3.client("s3")
+        keys = [
+            obj["Key"]
+            for page in s3.get_paginator("list_objects_v2").paginate(
+                Bucket=env.s3_bucket, Prefix=prefix
+            )
+            for obj in page.get("Contents", [])
+            if not obj["Key"].endswith("/")
+        ]
+        for key in keys:
+            target = root / key[len(prefix) :]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            s3.download_file(env.s3_bucket, key, str(target))
+    except Exception as exc:  # noqa: BLE001 - credentials, permissions, network
+        raise ModelLoadError(f"cannot download s3://{env.s3_bucket}/{prefix}: {exc}") from exc
+    if not keys:
+        raise ModelLoadError(f"s3://{env.s3_bucket}/{prefix} is empty; upload the bundle first")
+    bundle = load_from_local(root / HF_MODEL_DIR, env, source="s3")
+    bundle.state_dir = root / HF_STATE_DIR
+    logger.info("Loaded %s v%s from s3://%s/%s (%d files)", bundle.name, bundle.version,
+                env.s3_bucket, prefix, len(keys))  # fmt: skip
+    return bundle
+
+
 def load_model_bundle(config: AppConfig, env: EnvSettings) -> ModelBundle:
     """Load the model from ``MODEL_SOURCE``."""
     if env.model_source == "mlflow":
@@ -225,7 +264,7 @@ def load_model_bundle(config: AppConfig, env: EnvSettings) -> ModelBundle:
         return load_from_local(config.resolve(config.paths.models) / "champion", env)
     if env.model_source == "huggingface":
         return load_from_huggingface(env)
-    raise ModelLoadError(f"MODEL_SOURCE={env.model_source!r} is not available yet (Phase 12).")
+    return load_from_s3(env)
 
 
 def export_champion(config: AppConfig, env: EnvSettings, out_dir: Path) -> dict[str, Any]:

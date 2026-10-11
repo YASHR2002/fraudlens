@@ -125,6 +125,8 @@ class EnvSettings(BaseSettings):
     model_source: Literal["mlflow", "huggingface", "local", "s3"] = "mlflow"
     hf_repo_id: str | None = None
     hf_token: SecretStr | None = None
+    s3_bucket: str | None = None
+    s3_prefix: str = "fraudlens-model"
 
     @property
     def postgres_conninfo(self) -> str:

@@ -192,15 +192,6 @@ def test_local_model_source_after_export(project: Path, monkeypatch: pytest.Monk
     assert production_app.title == "FraudLens scoring API"
 
 
-def test_unavailable_model_source(monkeypatch: pytest.MonkeyPatch) -> None:
-    from fraudlens.api.model_loader import ModelLoadError, load_model_bundle
-
-    monkeypatch.setenv("MODEL_SOURCE", "s3")
-    get_env.cache_clear()
-    with pytest.raises(ModelLoadError, match="not available yet"):
-        load_model_bundle(get_config(), get_env())
-
-
 def test_huggingface_round_trip(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """push-model's staged repo is exactly what MODEL_SOURCE=huggingface loads (Hub mocked)."""
     champion = project / "models" / "champion"
@@ -232,3 +223,48 @@ def test_huggingface_round_trip(project: Path, monkeypatch: pytest.MonkeyPatch) 
     assert services.bundle.source == "huggingface" and services.bundle.state_dir == staged / "state"
     assert services.demo is not None and len(services.demo) > 0
     assert "PR-AUC" in (staged / "README.md").read_text(encoding="utf-8")
+
+
+def test_s3_round_trip(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`stage-model` output uploaded to S3 is what MODEL_SOURCE=s3 loads (S3 mocked by moto)."""
+    if not (project / "models" / "champion" / "metadata.json").is_file():
+        pytest.skip("needs the export and state from test_full_workflow")
+    import boto3
+    from moto import mock_aws
+
+    from fraudlens.api.main import build_services
+
+    out = project / "dist" / "model-bundle"
+    assert "Staged" in run("stage-model", "--out", str(out))
+    files = [p for p in out.rglob("*") if p.is_file()]
+    assert (out / "champion" / "metadata.json").is_file() and (out / "state").is_dir()
+    for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.setenv(key, "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-south-1")
+    with mock_aws():
+        s3 = boto3.client("s3", region_name="ap-south-1")
+        bucket = "fraudlens-123456789012-ap-south-1"
+        region = {"LocationConstraint": "ap-south-1"}
+        s3.create_bucket(Bucket=bucket, CreateBucketConfiguration=region)
+        for f in files:
+            s3.upload_file(str(f), bucket, f"fraudlens-model/{f.relative_to(out).as_posix()}")
+        s3.put_object(Bucket=bucket, Key="other/ignored.txt", Body=b"x")
+        monkeypatch.setenv("MODEL_SOURCE", "s3")
+        monkeypatch.setenv("S3_BUCKET", bucket)
+        monkeypatch.chdir(project.parent)  # state must come from S3, not data/
+        get_env.cache_clear()
+        services = build_services()
+        assert services.bundle.source == "s3" and services.demo is not None
+        assert not (services.bundle.state_dir.parent / "other").exists()
+
+        from fraudlens.api.model_loader import ModelLoadError, load_from_s3
+        from fraudlens.config import EnvSettings
+
+        empty = EnvSettings(_env_file=None, model_source="s3", s3_bucket=bucket, s3_prefix="none")
+        with pytest.raises(ModelLoadError, match="is empty"):
+            load_from_s3(empty)
+        missing = EnvSettings(_env_file=None, model_source="s3", s3_bucket="no-such-bucket")
+        with pytest.raises(ModelLoadError, match="cannot download"):
+            load_from_s3(missing)
+    with pytest.raises(ModelLoadError, match="needs S3_BUCKET"):
+        load_from_s3(EnvSettings(_env_file=None, model_source="s3", s3_bucket=None))

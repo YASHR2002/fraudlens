@@ -643,6 +643,34 @@ def _hf_token() -> str:
     return token.get_secret_value()
 
 
+@app.command("stage-model")
+def stage_model_cmd(
+    out: Annotated[Path, typer.Option(help="Folder to write the bundle to (replaced).")] = Path(
+        "dist/model-bundle"
+    ),
+) -> None:
+    """Write the deployable bundle (model, metadata, card state, demo set) to a folder.
+
+    The same layout as the Hugging Face repo; upload it to S3 with
+    `aws s3 sync dist/model-bundle s3://<bucket>/fraudlens-model/` (Phase 12).
+    """
+    import shutil
+
+    from fraudlens.deploy.hub import stage_model
+
+    config = get_config()
+    staged = stage_model(config.resolve(config.paths.processed),
+                         config.resolve(config.paths.models) / "champion", GITHUB_URL,
+                         "s3")  # fmt: skip
+    if out.exists():
+        shutil.rmtree(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(staged), str(out))
+    files = sorted(p for p in out.rglob("*") if p.is_file())
+    size = sum(p.stat().st_size for p in files) / 1e6
+    typer.echo(f"Staged {len(files)} files ({size:.1f} MB) in {out}")
+
+
 @app.command("push-model")
 def push_model_cmd(
     repo_id: Annotated[
